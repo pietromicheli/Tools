@@ -17,13 +17,21 @@ from Bio.PDB.Superimposer       import Superimposer
 from modeller                   import *
 from modeller.optimizers        import molecular_dynamics, conjugate_gradients
 from modeller.automodel         import autosched
-from paths                      import *
+from Tools.paths import *
+
+from urllib.request import urlopen
+
+mgltools_path=''
+vina_executable_path =''
+bp_center_reference_file='/autogrid_reference_files/'
+dlscore_path=''
 
 
 class protein_recognition:
-
+    '''tools to retrive protein information'''
     def get_seq(structure_filename, chain):
-
+        '''pdb file as input + chain
+        give us the sequence as string (converts 3 leter code to one letter code)'''
         #return the one-letter-code sequence of a structure
         #NB: specified chain must be in the FIRST model of the structure
 
@@ -43,16 +51,20 @@ class protein_recognition:
         return seq
 
     def get_uniprot_entry(structure_filename, chain):
-
+        '''pdb file as input + chain
+        gives the uniport id corresponding the the protein of the file'''
         seq = protein_recognition.get_seq(structure_filename, chain)
         results = NCBIWWW.qblast("blastp", "swissprot", seq, format_type="Text",hitlist_size=5 )
+
+        '''este codigo pode ser melhorado'''
+        #uniprot_entry = results[34].split(sep='.')[0]
 
         with open("my_blast.txt", "w") as out:
             out.write(results.read())
 
         results.close()
 
-        with open("my_blast.txt") as out:
+        with open("my_blast.txt", 'r') as out:
             for i,line in enumerate(out):
                 if i == 34:
                     refseq_entry = line.split(sep='.')[0]
@@ -63,7 +75,7 @@ class protein_recognition:
         return refseq_entry
 
     def retrive_geneid(uniprot_entry):
-
+        '''uniprot id as input and give us the gene id/name of the protein'''
         uniprot_url_query = "https://www.ebi.ac.uk/proteins/api/proteins/"+uniprot_entry
         html_data = urllib.urlopen(uniprot_url_query)
         datas = json.loads(html_data.read())
@@ -77,7 +89,7 @@ class protein_recognition:
         return gene_id
 
     def retrive_uniprot_seq(uniprot_entry):
-
+        '''uniport id as input and give us the original uniprot sequence of protein (download FASTA but return as string)'''
         uniprot_url = "https://www.uniprot.org/uniprot/"
         query_url = uniprot_entry+".fasta"
         html_data = urllib.urlopen(uniprot_url+query_url)
@@ -94,9 +106,9 @@ class find_compounds:
 
     def retrive_approved_drugs(uniprot_entry, ligands_directory):
 
-
+        '''uniprot id and an output directory. Calls indirectly drugbank and give us the sdf structures of all approved drugs towards the protein. '''
         mychem_url_query = "http://mychem.info/v1/query?q=drugbank.targets.uniprot:"+uniprot_entry+"%20AND%20drugbank.groups:approved&fields=drugbank.id,drugbank.name"
-        html_data = urllib.urlopen(mychem_url_query)
+        html_data = urlopen(mychem_url_query)
         datas = json.loads(html_data.read())
 
         #retrive SDF structures from DrugBank
@@ -105,6 +117,7 @@ class find_compounds:
             DrugBank_accession = hit["drugbank"]["id"]
             ligand_name = hit["drugbank"]["name"]
             drugbank_ligand_structure_url = "https://www.drugbank.ca/structures/small_molecule_drugs/"+DrugBank_accession+".sdf?type=3d"
+            print(drugbank_ligand_structure_url)
             html_data = urllib.urlopen(drugbank_ligand_structure_url)
 
             #check if there are spaces in the name of the ligand
@@ -117,13 +130,14 @@ class find_compounds:
         #if no drug-bank approved drugs were founded
         if not datas["hits"]:
 
-            print("\nWARNIG: NO APPROVED DRUGS FOUNDED\n")
+            print("\nWARNING: NO APPROVED DRUGS FOUNDED\n")
 
 
 class find_variants:
-
+    '''find the variants of the strucutre'''
     def retrive_exac_variants(gene_id):
-
+        '''gene id as input. we can call the function retrive_geneid to get the gene id. Give us a list of all of annotated missense variant
+        for the gene.    p.Arg300Lys'''
         #retrive all the missense variations annotated in the ExAc browser for the passed gene
 
         exac_url = "http://exac.hms.harvard.edu/"
@@ -142,7 +156,12 @@ class find_variants:
         return variants_list
 
     def LBD_variants_filter(receptor_filename, chain, family, variants_list):
+        '''pdb file as input + chain of our subunit + family + python list of HGVSp variants (from previous function).
+        give us a python list of all the input variants che stano nel biding site.
 
+        family = GPCR or IGR (ionotropic glutamatergic receptor)
+
+        chain in capital'''
         #given a receptor leading to the specified family and a list of variants (in the HGVSp notation)
         #annotated for the specified chain, return only the variants wich lay on the Ligand Binding Domain of the passed protein's structure.
 
@@ -195,11 +214,11 @@ class find_variants:
 class mutagenesis:
 
     def mutate(structure_pdb, chain, variant, out_pdb):
-
+        '''pdb file as input + chain + variant in HGVSp notation + output name (inlcuding pdb extension)'''
         #perform the computation af a mutatant model for the passed structure
         #the mutation will be performed over the specified chain, according to the passed HGVSp variant
         #NB : variant must be passed in the HGVSp notation
-
+        '''modeller script'''
         def optimize(atmsel, sched):
             #conjugate gradient
             for step in sched:
@@ -261,9 +280,11 @@ class mutagenesis:
         ali = alignment(env)
         ali.append_model(mdl1, atom_files=structure_pdb, align_codes=structure_pdb)
 
+        '''pietro start'''
         #extract the position and the substitute residue from the passed HGVSp-notated variant
         respos = variant[5:len(variant)-3]
         restyp = residues[variant[len(variant)-3:]]
+        '''pietro stop'''
 
         #set up the mutate residue selection segment
         s = selection(mdl1.chains[chain].residues[respos])
@@ -344,8 +365,8 @@ class mutagenesis:
 
 
 class bp_center:
-
-    reference_files = bp_center_reference_files
+    '''trova il centro del ligand binding domain'''
+    #reference_files = bp_center_reference_files
 
     def get_seq(res_list):
 
@@ -479,13 +500,15 @@ class bp_center:
         #perform an automatic detection of the orthosteric binding pocket's center for the passed chain of the passed structure
 
         #set the reference files directory
-        reference_files = bp_center.reference_files
+        #reference_files = bp_center.reference_files
+        reference_files = '/home/rribeiro/Projects/Tools/autogrid_reference_files'
+
 
         #NEW RECEPTORS FAMILIES SHOULD BE ADDED HERE!
 
         families = {
-                        'IGR' : [reference_files+'\\IGr_Ref.pdb', reference_files+'\\IGr_Ref_grids.txt'],
-                        'GPCR' : [reference_files+'\\GPCr_Ref.pdb', reference_files+'\\GPCr_Ref_grids.txt']
+                        'IGR' : [reference_files+'/IGr_Ref.pdb', reference_files+'/IGr_Ref_grids.txt'],
+                        'GPCR' : [reference_files+'/GPCr_Ref.pdb', reference_files+'/GPCr_Ref_grids.txt']
         }
 
 
@@ -521,7 +544,7 @@ class bp_center:
             for residue in ref_chain:
                 ref_res_dict[ref_chain.id].append(residue)
                 for atom in residue:
-                    ref_atoms_dict[ref_chain.id].append(atoms)
+                    ref_atoms_dict[ref_chain.id].append(atom)
 
         grids_file_ref = open(reference_grids_filename, "r")
 
