@@ -95,29 +95,56 @@ class find_compounds:
     def retrive_approved_drugs(uniprot_entry, ligands_directory):
 
 
-        mychem_url_query = "http://mychem.info/v1/query?q=drugbank.targets.uniprot:"+uniprot_entry+"%20AND%20drugbank.groups:approved&fields=drugbank.id,drugbank.name"
+        mychem_url_query = "http://mychem.info/v1/query?q=drugbank.targets.uniprot:"+uniprot_entry+"%20AND%20drugbank.groups:approved&fields=drugbank"
         html_data = urllib.urlopen(mychem_url_query)
         datas = json.loads(html_data.read())
 
-        #retrive SDF structures from DrugBank
+        #Retrive Drug's informations
+        Drugs = {}
         for hit in datas["hits"]:
 
             DrugBank_accession = hit["drugbank"]["id"]
             ligand_name = hit["drugbank"]["name"]
+
+            #retrive SDF structures from DrugBank
             drugbank_ligand_structure_url = "https://www.drugbank.ca/structures/small_molecule_drugs/"+DrugBank_accession+".sdf?type=3d"
-            html_data = urllib.urlopen(drugbank_ligand_structure_url)
+            try:
+                html_data = urllib.urlopen(drugbank_ligand_structure_url)
 
-            #check if there are spaces in the name of the ligand
-            if len(ligand_name.split()) > 1:
-                ligand_name = ''.join(ligand_name.split())
+            except:
+                print("Warning: No structural data for ligand: ", ligand_name)
 
-            with open(ligands_directory+'/'+ligand_name+'.sdf', "w") as f:
+            with open(ligands_directory+'/'+ligand_name+'.sdf', "w", encoding='utf-8') as f:
                 f.write(html_data.read().decode("utf-8"))
+
+            #Retrive Drug's informations
+            Drugs.update({ligand_name : {}})
+            #experimental properties
+            Drugs[ligand_name].update({'experimental_properties' : {}})
+            for property in ["pka", "logp"]:
+
+                if "experimental_properties" in hit["drugbank"] and property in hit["drugbank"]["experimental_properties"]:
+                    Drugs[ligand_name]['experimental_properties'].update({property : str(hit["drugbank"]["experimental_properties"][property])})
+                else:
+                    Drugs[ligand_name]['experimental_properties'].update({property : '-'})
+            #predicted properties
+            Drugs[ligand_name].update({'predicted_properties' : {}})
+            for property in ["pka_(strongest_acidic)","pka_(strongest_basic)","logp","h_bond_acceptor_count",
+                             "h_bond_donor_count","number_of_rings",
+                             "polar_surface_area_(psa)","rotatable_bond_count",
+                             "rule_of_five"]:
+
+                if "predicted_properties" in hit["drugbank"] and property in hit["drugbank"]["predicted_properties"]:
+                    Drugs[ligand_name]['predicted_properties'].update({property : str(hit["drugbank"]["predicted_properties"][property])})
+                else:
+                    Drugs[ligand_name]['predicted_properties'].update({property : '-'})
 
         #if no drug-bank approved drugs were founded
         if not datas["hits"]:
+            print("\nWARNING: NO APPROVED DRUGS FOUNDED\n")
 
-            print("\nWARNIG: NO APPROVED DRUGS FOUNDED\n")
+        #Return properties dictionary
+        return Drugs
 
 
 class find_variants:
@@ -161,7 +188,7 @@ class find_variants:
 
         #find the center of the Binding Pocket with bp_center
         center_coordinates = bp_center.bp_center(receptor_filename, chain, family)
-        #set maximum allowed distance (Amstrong)
+        #set maximum allowed distance (Armstrong)
         max_distance = 22
 
         #parse the structure
@@ -521,7 +548,7 @@ class bp_center:
             for residue in ref_chain:
                 ref_res_dict[ref_chain.id].append(residue)
                 for atom in residue:
-                    ref_atoms_dict[ref_chain.id].append(atoms)
+                    ref_atoms_dict[ref_chain.id].append(atom)
 
         grids_file_ref = open(reference_grids_filename, "r")
 
@@ -654,12 +681,11 @@ class automatic_docking:
         else:
             print('Error: file extension should be pdb, sdf or pdbqt')
 
-
         #Convert pdb to pdbqt with MGLTOOLS
 
         if ligand_extension != 'pdbqt':
 
-            subprocess.call([automatic_docking.mgltools+"\\python",automatic_docking.mgltools+"\\Lib\\site-packages\\AutoDockTools\\Utilities24\\prepare_ligand4.py", "-l",(ligand_path+".pdb"),"-o",(output_location_pdbqt),'-A','hydrogens'])
+            subprocess.call([automatic_docking.mgltools+"\\python",automatic_docking.mgltools+"\\Lib\\site-packages\\AutoDockTools\\Utilities24\\prepare_ligand4.py", "-l",(ligand_path+".pdb"),"-o",(output_location_pdbqt)])
 
         #return the converted ligand.pdbqt
         return output_location_pdbqt
@@ -721,27 +747,27 @@ class handle_pdb:
     def append_pdb(file1_pdb, file2_pdb, out_filename):
 
         #append file1_pdb to file2_pdb
-        ref = open(file2_pdb,'r')
-        app = open(file1_pdb,'r')
+        ref = open(file1_pdb,'r')
+        app = open(file2_pdb,'r')
         out = open(out_filename,'w+')
-
-        out.write('MODEL 1\n')
-
-        for line in app:
-            columns = line.split()
-            if columns[0] in ['ATOM','CONNECT']:
-                out.write(line)
-
-        out.write('ENDMDL\n')
-        out.write('MODEL 2\n')
 
         for line in ref:
             columns=line.split()
-            if columns[0] in ['ATOM','HETATM','CONNECT']:
+            if columns[0] in ['ATOM','HETATM']:
                 out.write(line)
 
-        out.write('ENDMDL\n')
+        ref.close()
+
+        for line in app:
+            columns = line.split()
+            if columns[0] in ['HETATM','ATOM','CONECT']:
+                out.write(line)
+
+        app.close()
         out.write('END')
+        out.close()
+
+        return out_filename
 
     def merge_pdbqts(pdbqt_filename1, pdbqt_filename2, pdb_out_filename):
 
@@ -750,9 +776,9 @@ class handle_pdb:
         pdbqt_basename2 = (os.path.splitext(os.path.basename(pdbqt_filename2)))[0]
         converted_filename1 = pdbqt_basename1+'.pdb'
         converted_filename2 = pdbqt_basename2+'.pdb'
-        pdbqt2pdb(pdbqt_filename1, converted_filename1)
-        pdbqt2pdb(pdbqt_filename2, converted_filename2)
-        append_pdb(converted_filename1, converted_filename2, out_filename)
+        handle_pdb.pdbqt2pdb(pdbqt_filename1, converted_filename1)
+        handle_pdb.pdbqt2pdb(pdbqt_filename2, converted_filename2)
+        handle_pdb.append_pdb(converted_filename1, converted_filename2, pdb_out_filename)
 
         os.remove(converted_filename1)
         os.remove(converted_filename2)
