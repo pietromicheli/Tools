@@ -22,15 +22,18 @@ from paths                      import *
 
 class protein_recognition:
 
+    one_letter_code = {'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLU':'E','GLN':'Q','GLY':'G','HIS':'H',
+                       'ILE':'I','LEU':'L','LYS':'K','MET':'M','PHE':'F','PRO':'P','SER':'S','THR':'T','TRP':'W',
+                       'TYR':'Y','VAL':'V'}
+
+    three_letters_code = {'V':'VAL', 'I':'ILE', 'L':'LEU', 'E':'GLU', 'Q':'GLN','R':'ARG', 'K':'LYS', 'S':'SER',
+                          'N':'ASN','D':'ASP','C':'CYS','Y':'TYR','T':'THR', 'M':'MET', 'A':'ALA','G':'GLY','F':'PHE',
+                          'P':'PRO', 'C':'CYS'}
+
     def get_seq(structure_filename, chain):
 
         #return the one-letter-code sequence of a structure
         #NB: specified chain must be in the FIRST model of the structure
-
-        letters = {'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLU':'E','GLN':'Q','GLY':'G','HIS':'H',
-                   'ILE':'I','LEU':'L','LYS':'K','MET':'M','PHE':'F','PRO':'P','SER':'S','THR':'T','TRP':'W',
-                   'TYR':'Y','VAL':'V'}
-        seq = ""
 
         parser = PDBParser(PERMISSIVE=1)
         structure = parser.get_structure('query', structure_filename)
@@ -38,7 +41,7 @@ class protein_recognition:
         chain = structure[0][chain]
         for residue in chain:
             if residue.id[0] == ' ':
-                seq = seq+letters[residue.get_resname()]
+                seq = seq+protein_recognition.one_letter_code[residue.get_resname()]
 
         return seq
 
@@ -89,6 +92,30 @@ class protein_recognition:
         seq_str = ''.join(fasta_splitted[1:])
 
         return seq_str
+
+    def detect_mutations(structure_pdb, structure_seq, uniprot_seq, chain):
+
+        #detect the residues of the structure which differ from the uniprot-annotated wyld-type sequence
+        #return a list of variants in HGVSp notation
+
+        #NB: structure_pdb MUST be previousy cleaned  and correctly numerated (relative to the uniprot sequence)
+
+        parser = PDBParser(PERMISSIVE=1)
+        structure = parser.get_structure('query', structure_pdb)
+
+        alignment = pairwise2.align.localdd(uniprot_seq, structure_seq, blosum62, -1000, -1000, -10, -0.5)[0]
+
+        #search for mismatch in the alignment
+        engineered_residues = []
+        for i in range(len(alignment[0])):
+
+            if alignment[1][i] != '-' and alignment[0][i] != alignment[1][i]:
+                resnumber = i+1
+                wyld_type_res = protein_recognition.three_letters_code[alignment[0][i]]
+                engineered_res = protein_recognition.three_letters_code[alignment[1][i]]
+                engineered_residues.append('p.'+wyld_type_res+str(resnumber)+engineered_res)
+
+        return engineered_residues
 
 class find_compounds:
 
@@ -377,15 +404,13 @@ class bp_center:
     def get_seq(res_list):
 
         #return the one-letter-code sequence of a list of residues
-        letters = {'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLU':'E','GLN':'Q','GLY':'G','HIS':'H',
-                   'ILE':'I','LEU':'L','LYS':'K','MET':'M','PHE':'F','PRO':'P','SER':'S','THR':'T','TRP':'W',
-                   'TYR':'Y','VAL':'V'}
+
         residues = []
         seq = ""
 
         for res in res_list:
             if res.id[0] == ' ':
-                seq = seq + letters[res.get_resname()]
+                seq = seq + protein_recognition.one_letter_code[res.get_resname()]
 
         return seq
 
@@ -732,6 +757,9 @@ class handle_pdb:
 
         if file_pdb == out_pdb:
             os.remove(file_pdb)
+
+        if os.path.isfile(out_pdb):
+            os.remove(out_pdb)
 
         os.rename("temp.tmp", out_pdb)
 
